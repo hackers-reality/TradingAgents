@@ -1411,6 +1411,39 @@ def classify_message_type(message) -> tuple[str, str | None]:
     return ("System", content)
 
 
+def extract_thinking_text(message) -> str | None:
+    """Pull reasoning/thinking text off a streamed message, if any.
+
+    Reasoning models park their chain-of-thought outside ``.content``
+    (DeepSeek-style ``reasoning_content`` in additional kwargs, or typed
+    ``reasoning`` blocks in content lists) and the client normalization
+    discards those blocks — so without this the feed only ever shows final
+    outputs. Returns None when there is nothing to show.
+    """
+    parts = []
+    try:
+        extra = getattr(message, "additional_kwargs", None) or {}
+        reasoning = extra.get("reasoning_content")
+        if isinstance(reasoning, str) and reasoning.strip():
+            parts.append(reasoning.strip())
+        content = getattr(message, "content", None)
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") in ("reasoning", "reasoning_text", "thinking"):
+                    text = block.get("text") or block.get("reasoning") or ""
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+                elif block.get("type") == "text" and isinstance(block.get("thinking_text"), str):
+                    if block["thinking_text"].strip():
+                        parts.append(block["thinking_text"].strip())
+    except Exception:
+        return None
+    combined = "\n".join(parts).strip()
+    return combined or None
+
+
 def format_tool_args(args, max_length=80) -> str:
     """Format tool arguments for terminal display."""
     result = str(args)
@@ -1831,6 +1864,13 @@ def run_analysis(checkpoint: bool | None = None, selections: dict | None = None,
                     msg_type, content = classify_message_type(message)
                     if content and content.strip():
                         message_buffer.add_message(msg_type, content)
+
+                    # Chain-of-thought lives outside .content — capture it so
+                    # the activity feed shows thinking as it happens, not just
+                    # final outputs.
+                    thinking = extract_thinking_text(message)
+                    if thinking:
+                        message_buffer.add_message("Thinking", thinking)
 
                     if hasattr(message, "tool_calls") and message.tool_calls:
                         for tool_call in message.tool_calls:

@@ -338,8 +338,8 @@ $('actclose').onclick = () => { $('actmodal').style.display = 'none'; };
 $('actmodal').onclick = e => { if (e.target.id === 'actmodal') $('actmodal').style.display = 'none'; };
 function renderActivity(msgs){
   const list = $('actlist');
-  // Agent messages only — tool calls already live in Messages & Tools.
-  const agents = msgs.map((x, i) => ({...x, i})).filter(x => x.type !== 'Tool');
+  // Agent thinking + messages only — tool calls already live in Messages & Tools.
+  const agents = msgs.map((x, i) => ({...x, i})).filter(x => x.type === 'Agent' || x.type === 'Thinking');
   const items = agents.slice(-30).reverse();
   if (!items.length) { list.innerHTML = '<span class="empty">Waiting for agent messages…</span>'; return; }
   list.innerHTML = items.map(x => {

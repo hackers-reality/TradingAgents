@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import { api } from "../../lib/api";
-import ActivityCard from "../../components/ActivityCard";
 
 type Run = { id: string; ticker: string; date: string; provider: string; status: string; awaiting_input: boolean };
 
@@ -34,6 +33,12 @@ function Quote({ ticker }: { ticker: string }) {
 
 function fmtElapsed(s: number) {
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function fmtTokens(n: number) {
+  if (!n) return "0";
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return `${n}`;
 }
 
 export default function Live() {
@@ -131,15 +136,17 @@ export default function Live() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h1>
-          Live{" "}
-          {live && <span className="pill pill-in_progress">live</span>}
-          {pending && <span className="pill pill-pending">awaiting input</span>}
-          {status === "done" && <span className="pill pill-completed">done</span>}
-          {status === "error" && <span className="pill pill-error">error</span>}
-        </h1>
-        {meta.ticker && <Quote ticker={meta.ticker} />}
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <h1 style={{ margin: 0 }}>
+            Live{" "}
+            {live && <span className="pill pill-in_progress">live</span>}
+            {pending && <span className="pill pill-pending">awaiting input</span>}
+            {status === "done" && <span className="pill pill-completed">done</span>}
+            {status === "error" && <span className="pill pill-error">error</span>}
+          </h1>
+          {meta.ticker && <Quote ticker={meta.ticker} />}
+        </div>
       </div>
       {running && (
         <div style={{ margin: "8px 0" }}>
@@ -167,6 +174,14 @@ export default function Live() {
             <span className="chip">Agents <b>{state.agents_completed}/{state.agents_total}</b></span>
             <span className="chip">LLM <b>{st.llm_calls ?? "–"}</b></span>
             <span className="chip">Tools <b>{st.tool_calls ?? "–"}</b></span>
+            <span className="chip" title="input / output / total tokens">
+              ↑<b>{fmtTokens(st.tokens_in || 0)}</b> ↓<b>{fmtTokens(st.tokens_out || 0)}</b> Σ
+              <b>{fmtTokens((st.tokens_in || 0) + (st.tokens_out || 0))}</b>
+            </span>
+            {meta.shallow_thinker && <span className="chip" title={meta.shallow_thinker}>⚡ <b>{meta.shallow_thinker}</b></span>}
+            {meta.deep_thinker && meta.deep_thinker !== meta.shallow_thinker && (
+              <span className="chip" title={meta.deep_thinker}>🧠 <b>{meta.deep_thinker}</b></span>
+            )}
             <span className="chip">Reports <b>{state.reports_completed}/{state.reports_total}</b></span>
             <span className="chip">⏱ <b>{fmtElapsed(state.elapsed_seconds || 0)}</b></span>
             <span className="chip">
@@ -236,7 +251,6 @@ export default function Live() {
               </div>
             </div>
           </div>
-          <ActivityCard messages={state.messages || []} />
           <div className="panel">
             <h2>
               Current report{" "}

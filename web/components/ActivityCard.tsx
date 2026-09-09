@@ -22,7 +22,11 @@ export default function ActivityCard({
   const drag = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
 
   // Agent messages only — tool calls already live in Messages & Tools.
-  const items = messages.filter((m) => m.type === "Agent").slice(-30).reverse();
+  // Agent thinking + messages only — tool calls already live in Messages & Tools.
+  const items = messages
+    .filter((m) => m.type === "Agent" || m.type === "Thinking")
+    .slice(-30)
+    .reverse();
 
   function onDown(e: React.MouseEvent) {
     const el = (e.currentTarget as HTMLElement).parentElement as HTMLElement;

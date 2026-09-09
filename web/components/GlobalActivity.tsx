@@ -49,8 +49,8 @@ function RunFeed({
   );
 }
 
-/** Global live-run tickers: minimized buttons fixed on the right on every page.
- *  Clicking one expands that run's floating ActivityCard feed. */
+/** Edge tabs, middle-right: half-hidden flashing pill per live run.
+ *  Hover slides out the ticker peek; click expands that run's feed. */
 export default function GlobalActivity() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [open, setOpen] = useState<Record<string, boolean>>({});
@@ -74,7 +74,6 @@ export default function GlobalActivity() {
   }, []);
 
   const live = runs.filter((r) => isLive(r.status));
-  // Drop open flags for runs that are no longer live.
   const liveIds = new Set(live.map((r) => r.id));
   const openIds = Object.keys(open).filter((id) => open[id] && liveIds.has(id));
   const minimized = live.filter((r) => !open[r.id]);
@@ -83,34 +82,12 @@ export default function GlobalActivity() {
   return (
     <>
       {minimized.length > 0 && (
-        <div
-          style={{
-            position: "fixed",
-            right: 16,
-            bottom: 56,
-            display: "flex",
-            flexDirection: "column",
-            zIndex: 60,
-          }}
-        >
-          {minimized.map((r, i) => (
-            <button
-              key={r.id}
-              className="ghost"
-              onClick={() => setOpen((o) => ({ ...o, [r.id]: true }))}
-              title={`${r.ticker} ${r.date} — ${r.status} (click to expand activity)`}
-              style={{
-                marginTop: i === 0 ? 0 : -6,
-                borderColor: "#ea580c",
-                background: "#fff7ed",
-                fontSize: 12,
-                whiteSpace: "nowrap",
-              }}
-            >
-              <span className="pill pill-in_progress" style={{ marginRight: 6 }}>
-                live
-              </span>
-              {r.ticker} {r.date}
+        <div className="edgetabs" title="Live runs — hover to peek, click to expand">
+          {minimized.map((r) => (
+            <button key={r.id} className="edgetab" onClick={() => setOpen((o) => ({ ...o, [r.id]: true }))}>
+              <span className="dot" />
+              <span className="tick">{r.ticker}</span>
+              <span>{r.date}</span>
             </button>
           ))}
         </div>

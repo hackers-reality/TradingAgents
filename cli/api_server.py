@@ -471,6 +471,8 @@ def _proc_snapshot(rec):
             "analysis_date": sel.get("analysis_date"),
             "llm_provider": sel.get("llm_provider"),
             "date_notice": sel.get("date_notice"),
+            "shallow_thinker": sel.get("shallow_thinker"),
+            "deep_thinker": sel.get("deep_thinker"),
         },
         "last_activity_age": None,
         "current_agent": status.get("current_agent"),

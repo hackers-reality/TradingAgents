@@ -11,7 +11,9 @@ export default function Reports() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sel, setSel] = useState("");
   const [files, setFiles] = useState<FileEntry[]>([]);
+  const [view, setView] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
   const [checked, setChecked] = useState<Set<string>>(new Set());
 
   function toggle(id: string) {
@@ -26,13 +28,26 @@ export default function Reports() {
   async function reload() {
     try {
       const r = await api.sessions();
-      const list = (r.sessions || []) as Session[];
-      setSessions(list);
+      setSessions(r.sessions);
       setChecked(new Set());
-      if (!list.some((s) => s.id === sel)) {
+      if (!r.sessions.some((s: Session) => s.id === sel)) {
         setSel("");
         setFiles([]);
+        setView("");
       }
+    } catch (e: any) {
+      setError(e.data?.error || String(e.message || e));
+    }
+  }
+
+  async function open(id: string) {
+    setSel(id);
+    setError("");
+    try {
+      const r = await api.session(id);
+      setFiles(r.files);
+      const complete = r.files.find((f: FileEntry) => f.path.endsWith("complete_report.md"));
+      setView(complete ? complete.path : r.files[0]?.path || "");
     } catch (e: any) {
       setError(e.data?.error || String(e.message || e));
     }
@@ -61,36 +76,25 @@ export default function Reports() {
     }
   }
 
-  async function open(id: string) {
-    setSel(id);
-    setError("");
-    try {
-      const r = await api.session(id);
-      setFiles(r.files || []);
-    } catch (e: any) {
-      setError(e.data?.error || String(e.message || e));
-    }
-  }
-
   useEffect(() => {
     const q = new URLSearchParams(window.location.search).get("session");
+    // Default reports location is auto-loaded: ?session= wins, else most recent.
     api.sessions()
       .then((r) => {
-        const list = (r.sessions || []) as Session[];
-        setSessions(list);
-        if (q) {
-          open(q);
-        } else if (list.length) {
-          open(list[0].id);
-        }
+        setSessions(r.sessions);
+        const target = q || r.sessions[0]?.id || "";
+        if (target) open(target);
       })
-      .catch((e) => setError(String(e.message || e)));
+      .catch((e) => setError(String(e.message || e)))
+      .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const current = files.find((f) => f.path === view);
+
   return (
     <div>
-      <h1>Reports</h1>
+      <h1>Reports &amp; sessions</h1>
       {error && <p className="err">{error}</p>}
       <div className="row">
         <div className="panel col" style={{ maxWidth: 380 }}>
@@ -125,32 +129,34 @@ export default function Reports() {
                 </button>
               </div>
             ))}
-            {!sessions.length && !error && <div className="shimmer" style={{ height: 120 }} />}
-            {!sessions.length && !error ? null : sessions.length ? null : (
-              <p className="dim">No sessions yet.</p>
-            )}
+            {loading && <div className="shimmer" style={{ height: 120 }} />}
+            {!loading && !sessions.length && <span className="dim">No sessions found.</span>}
           </div>
         </div>
         <div className="panel col" style={{ flex: 2 }}>
-          <h2>{sel ? `Reports — ${sel}` : "Select a session"}</h2>
-          {!sel && <p className="dim">Pick a session to view its reports.</p>}
-          <div className="scroll" style={{ maxHeight: "70vh" }}>
-            {files.map((f) => (
-              <details key={f.path} className="session" open={files.length <= 3}>
-                <summary>{f.path}</summary>
-                <div className="files">
-                  {f.path.endsWith(".md") ? (
-                    <div className="md">
-                      <ReactMarkdown>{f.content}</ReactMarkdown>
-                    </div>
-                  ) : (
-                    <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{f.content}</pre>
-                  )}
-                  {f.truncated && <p className="dim">(truncated tail)</p>}
-                </div>
-              </details>
-            ))}
-            {sel && !files.length && !error && <div className="shimmer" style={{ height: 120 }} />}
+          <h2>{sel || "Select a session"}</h2>
+          {files.length > 0 && (
+            <div style={{ marginBottom: 8 }}>
+              {files.map((f) => (
+                <button
+                  key={f.path}
+                  className="ghost"
+                  style={{ marginRight: 6, marginBottom: 6, borderColor: f.path === view ? "#ea580c" : undefined }}
+                  onClick={() => setView(f.path)}
+                >
+                  {f.path}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="scroll md" style={{ maxHeight: "65vh" }}>
+            {current ? (
+              current.path.endsWith(".md")
+                ? <ReactMarkdown>{current.content}</ReactMarkdown>
+                : <pre style={{ whiteSpace: "pre-wrap" }}>{current.content}</pre>
+            ) : (
+              <span className="dim">Pick a session, then a file.</span>
+            )}
           </div>
         </div>
       </div>
