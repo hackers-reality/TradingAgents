@@ -12,6 +12,7 @@ export default function Settings() {
   const [opencodeUrl, setOpencodeUrl] = useState("");
   const [opencodeOpts, setOpencodeOpts] = useState<any>(null);
   const [apiBase, setApiBase] = useState("");
+  const [backendUrl, setBackendUrl] = useState("");
 
   function load() {
     api.keys()
@@ -28,6 +29,7 @@ export default function Settings() {
 
   useEffect(() => {
     if (opencodeOpts?.opencode) setOpencodeUrl(opencodeOpts.opencode.current);
+    if (typeof opencodeOpts?.customBackendUrl === "string") setBackendUrl(opencodeOpts.customBackendUrl);
   }, [opencodeOpts]);
 
   async function save(p: Provider) {
@@ -64,6 +66,15 @@ export default function Settings() {
       setResults((r) => ({ ...r, catalog: { ok: true, message: `Catalog endpoint saved: ${opencodeUrl}` } }));
     } catch (e: any) {
       setResults((r) => ({ ...r, catalog: { ok: false, message: e.data?.error || String(e.message || e) } }));
+    }
+  }
+
+  async function saveBackend() {
+    try {
+      await api.saveKey("TRADINGAGENTS_LLM_BACKEND_URL", backendUrl);
+      setResults((r) => ({ ...r, backend: { ok: true, message: backendUrl ? `Endpoint saved: ${backendUrl}` : "Endpoint cleared (unset)" } }));
+    } catch (e: any) {
+      setResults((r) => ({ ...r, backend: { ok: false, message: e.data?.error || String(e.message || e) } }));
     }
   }
 
@@ -152,6 +163,23 @@ export default function Settings() {
         {results.catalog && (
           <span className={results.catalog.ok ? "ok" : "err"}>{results.catalog.ok ? "✓ " : ""}{results.catalog.message}</span>
         )}
+      </div>
+      <div className="panel">
+        <h2>OpenAI-compatible endpoint</h2>
+        <label className="field" style={{ maxWidth: 520 }}>
+          Endpoint URL
+          <input
+            type="text"
+            placeholder="unset"
+            value={backendUrl}
+            onChange={(e) => setBackendUrl(e.target.value)}
+          />
+        </label>
+        <button className="ghost" onClick={saveBackend}>Save</button>{" "}
+        {results.backend && (
+          <span className={results.backend.ok ? "ok" : "err"}>{results.backend.ok ? "✓ " : ""}{results.backend.message}</span>
+        )}
+        <p className="dim">Applies to the openai_compatible provider; empty means unset.</p>
       </div>
     </div>
   );

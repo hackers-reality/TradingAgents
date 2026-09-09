@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 import queue
 import sys
@@ -380,6 +381,137 @@ def ask_everywhere(server, question, default=""):
             pending["answer"] = None
 
 
+def _atomic_write_json(path, payload):
+    """Write JSON atomically (tmp + replace) so concurrent readers never
+    see a half-written file. Falls back to a plain write if replace fails.
+    """
+    import tempfile
+
+    path = Path(path)
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", delete=False, dir=str(path.parent)
+        ) as f:
+            json.dump(payload, f)
+            tmp = f.name
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            if tmp:
+                os.unlink(tmp)
+        except OSError:
+            pass
+        try:
+            path.write_text(json.dumps(payload), encoding="utf-8")
+        except OSError:
+            pass
+
+
+class FilePromptHub:
+    """File-backed ask_everywhere hub for subprocess runs.
+
+    ``pending_prompt`` behaves exactly like the in-process hub; a daemon
+    thread mirrors it to ``prompt.json`` in the job dir (published question,
+    polled answer) so the API can drive post-run prompts across processes.
+    """
+
+    POLL_SECONDS = 0.5
+
+    def __init__(self, job_dir):
+        self.job_dir = Path(job_dir)
+        self.job_dir.mkdir(parents=True, exist_ok=True)
+        self.pending_prompt = {"question": None, "default": None, "answer": None}
+        self._path = self.job_dir / "prompt.json"
+        self._write({})
+        threading.Thread(target=self._sync_loop, daemon=True).start()
+
+    def _write(self, payload):
+        _atomic_write_json(self._path, payload)
+
+    def _read(self):
+        try:
+            return json.loads(self._path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _sync_loop(self):
+        published = (None, None)
+        while True:
+            try:
+                pending = self.pending_prompt
+                question, default = pending.get("question"), pending.get("default")
+                if question:
+                    # Publish once per question; never rewrite afterwards, or
+                    # an API-written answer could be clobbered before we read
+                    # it. The API preserves {question, default} when answering.
+                    if (question, default) != published:
+                        self._write({"question": question, "default": default})
+                        published = (question, default)
+                    file_state = self._read()
+                    if (
+                        isinstance(file_state.get("answer"), str)
+                        and file_state.get("question", question) == question
+                    ):
+                        pending["answer"] = file_state["answer"]
+                else:
+                    if published != (None, None):
+                        self._write({})
+                        published = (None, None)
+            except Exception:
+                pass
+            time.sleep(self.POLL_SECONDS)
+
+
+# Module-global job-status sink, set by run_analysis for --job-dir runs and
+# flushed at the end of every update_display (cheap: one tiny JSON write).
+_job_sink = None
+
+
+class JobStatusSink:
+    """Writes live run state to <job_dir>/status.json for the API."""
+
+    def __init__(self, job_dir, selections, stats_handler, start_time):
+        self.job_dir = Path(job_dir)
+        self.job_dir.mkdir(parents=True, exist_ok=True)
+        self.selections = selections
+        self.stats_handler = stats_handler
+        self.start_time = start_time
+        self.path = self.job_dir / "status.json"
+        self.extra = {}  # free-form extras merged into every dump (e.g. save_path)
+        self.dump("starting")
+
+    def dump(self, status="running", error=None):
+        try:
+            stats = self.stats_handler.get_stats() if self.stats_handler else {}
+        except Exception:
+            stats = {}
+        try:
+            reports_completed = message_buffer.get_completed_reports_count()
+        except Exception:
+            reports_completed = 0
+        payload = {
+            "status": status,
+            "error": error,
+            "elapsed_seconds": int(time.time() - self.start_time),
+            **self.extra,
+            "reports_completed": reports_completed,
+            "reports_total": len(message_buffer.report_sections),
+            "ticker": self.selections.get("ticker"),
+            "analysis_date": self.selections.get("analysis_date"),
+            "llm_provider": self.selections.get("llm_provider"),
+            "agents": dict(message_buffer.agent_status),
+            "current_agent": message_buffer.current_agent,
+            "last_update": message_buffer.last_update,
+            "stats": stats,
+            "reports_completed": message_buffer.get_completed_reports_count(),
+            "reports_total": len(message_buffer.report_sections),
+            "start_time": self.start_time,
+            "updated_at": time.time(),
+        }
+        _atomic_write_json(self.path, payload)
+
+
 def create_layout():
     layout = Layout()
     layout.split_column(
@@ -667,6 +799,14 @@ def update_display(layout, spinner_text=None, stats_handler=None, start_time=Non
     stats_table.add_row(" | ".join(stats_parts))
 
     layout["footer"].update(Panel(stats_table, border_style="grey50"))
+
+    # File sink for --job-dir (subprocess) runs: one tiny JSON write per
+    # display refresh keeps the API's live view current.
+    if _job_sink is not None:
+        try:
+            _job_sink.dump()
+        except Exception:
+            pass
 
 
 def get_user_selections():
@@ -1413,7 +1553,8 @@ def _normalize_selections(selections: dict) -> dict:
 
 
 def run_analysis(checkpoint: bool | None = None, selections: dict | None = None,
-                 prompt_hub=None, headless: bool = False, run_record=None):
+                 prompt_hub=None, headless: bool = False, run_record=None,
+                 job_dir=None):
     """Run one analysis.
 
     Interactive (CLI) by default: prompts for every selection. Programmatic
@@ -1424,7 +1565,12 @@ def run_analysis(checkpoint: bool | None = None, selections: dict | None = None,
     3 post-run prompts instead of/in addition to the terminal; ``headless``
     silences the fullscreen Live view for server-side runs.
     """
-    global dashboard_port
+    global dashboard_port, _job_sink
+    # Subprocess (parallel web) runs: everything file-driven, no prompts,
+    # no dashboard, no fullscreen. Implies headless.
+    if job_dir is not None:
+        headless = True
+        prompt_hub = FilePromptHub(job_dir)
     # Entry choice comes FIRST: full web app or CLI. Web mode boots the
     # servers and exits the CLI; the whole flow then happens in the browser.
     if selections is None and not headless:
@@ -1469,6 +1615,12 @@ def run_analysis(checkpoint: bool | None = None, selections: dict | None = None,
     # Track start time for elapsed display
     start_time = time.time()
 
+    # File sink for --job-dir (parallel subprocess) runs.
+    global _job_sink
+    _job_sink = None
+    if job_dir is not None:
+        _job_sink = JobStatusSink(job_dir, selections, stats_handler, start_time)
+
     # Create result directory
     results_dir = Path(config["results_dir"]) / selections["ticker"] / selections["analysis_date"]
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -1484,8 +1636,13 @@ def run_analysis(checkpoint: bool | None = None, selections: dict | None = None,
             func(*args, **kwargs)
             timestamp, message_type, content = obj.messages[-1]
             content = content.replace("\n", " ")  # Replace newlines with spaces
+            # Owning agent (if any) rides along so file-backed UIs can
+            # attribute the feed per agent: "HH:MM:SS [Type | Agent] text".
+            # Lines without an agent keep the legacy "HH:MM:SS [Type] text".
+            agent = getattr(obj, "current_agent", None)
+            tag = f"{message_type} | {agent}" if agent else message_type
             with open(log_file, "a", encoding="utf-8") as f:
-                f.write(f"{timestamp} [{message_type}] {content}\n")
+                f.write(f"{timestamp} [{tag}] {content}\n")
         return wrapper
 
     def save_tool_call_decorator(obj, func_name):
@@ -1819,6 +1976,9 @@ def run_analysis(checkpoint: bool | None = None, selections: dict | None = None,
         try:
             report_file = save_report_to_disk(final_state, selections["ticker"], save_path)
             saved_dir = save_path
+            if _job_sink is not None:
+                _job_sink.extra["save_path"] = str(save_path)
+                _job_sink.dump()
             console.print(f"\n[green]✓ Report saved to:[/green] {save_path.resolve()}")
             console.print(f"  [dim]Complete report:[/dim] {report_file.name}")
         except Exception as e:
@@ -1864,6 +2024,13 @@ def run_analysis(checkpoint: bool | None = None, selections: dict | None = None,
     stop_dashboard(dashboard_server)
     dashboard_port = None
 
+    if _job_sink is not None:
+        try:
+            _job_sink.dump("done")
+        except Exception:
+            pass
+        _job_sink = None
+
     if run_record is not None:
         run_record.final_state = final_state
         run_record.status = "done"
@@ -1903,7 +2070,41 @@ def analyze(
         "--clear-checkpoints",
         help="Delete all saved checkpoints before running (force fresh start).",
     ),
+    from_json: Path | None = typer.Option(
+        None,
+        "--from-json",
+        help="Non-interactive run: selections JSON file (used by the web API "
+        "to launch parallel subprocess runs). Requires --job-dir.",
+    ),
+    job_dir: Path | None = typer.Option(
+        None,
+        "--job-dir",
+        help="Job directory for prompt.json/status.json file IPC (parallel "
+        "subprocess runs). Implies headless.",
+    ),
 ):
+    if from_json is not None:
+        import json as _jsonlib
+
+        if job_dir is None:
+            console.print("[red]--from-json requires --job-dir.[/red]")
+            raise typer.Exit(code=2)
+        try:
+            selections = _jsonlib.loads(Path(from_json).read_text(encoding="utf-8"))
+        except Exception as exc:
+            console.print(f"[red]Could not read selections: {exc}[/red]")
+            raise typer.Exit(code=2)
+        try:
+            run_analysis(
+                checkpoint=checkpoint, selections=selections, job_dir=job_dir
+            )
+        except Exception as exc:
+            _atomic_write_json(
+                Path(job_dir) / "status.json",
+                {"status": "error", "error": f"{type(exc).__name__}: {exc}"},
+            )
+            raise
+        return
     if clear_checkpoints:
         from tradingagents.graph.checkpointer import clear_all_checkpoints
         n = clear_all_checkpoints(DEFAULT_CONFIG["data_cache_dir"])

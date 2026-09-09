@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import { api } from "../../lib/api";
 import ActivityCard from "../../components/ActivityCard";
@@ -36,6 +37,7 @@ function fmtElapsed(s: number) {
 }
 
 export default function Live() {
+  const router = useRouter();
   const [runs, setRuns] = useState<Run[]>([]);
   const [runId, setRunId] = useState("");
   const [state, setState] = useState<any>(null);
@@ -43,6 +45,7 @@ export default function Live() {
   const [error, setError] = useState("");
   const [followMsg, setFollowMsg] = useState(true);
   const [followRep, setFollowRep] = useState(true);
+  const [countdown, setCountdown] = useState<number | null>(null);
   const msgRef = useRef<HTMLDivElement>(null);
   const repRef = useRef<HTMLDivElement>(null);
 
@@ -97,6 +100,34 @@ export default function Live() {
   const meta = state?.meta || {};
   const status = state?.status || "unknown";
   const live = state?.active && status === "running" && !pending;
+  const running = status === "starting" || status === "running";
+
+  useEffect(() => {
+    if (status !== "done" && status !== "error") {
+      setCountdown(null);
+      return;
+    }
+    setCountdown(10);
+  }, [status]);
+
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdown <= 0) {
+      router.push("/reports");
+      return;
+    }
+    const t = setTimeout(() => setCountdown((c) => (c === null ? null : c - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [countdown, router]);
+
+  async function stop() {
+    if (!window.confirm(`Stop run ${runId}?`)) return;
+    try {
+      await api.stopRun(runId);
+    } catch (e: any) {
+      setError(e.data?.error || String(e.message || e));
+    }
+  }
 
   return (
     <div>
@@ -110,6 +141,14 @@ export default function Live() {
         </h1>
         {meta.ticker && <Quote ticker={meta.ticker} />}
       </div>
+      {running && (
+        <div style={{ margin: "8px 0" }}>
+          <button className="ghost" onClick={stop}>Stop</button>
+        </div>
+      )}
+      {countdown !== null && (
+        <p className="dim">Redirecting to Reports in {countdown}s…</p>
+      )}
       {error && <p className="err">{error}</p>}
       <label className="field" style={{ maxWidth: 460 }}>
         Run
@@ -134,6 +173,7 @@ export default function Live() {
               ● <b>{state.current_agent || "idle"}</b> {state.last_activity_age ?? 0}s ago
             </span>
             {meta.llm_provider && <span className="chip">{meta.llm_provider}</span>}
+            {meta.date_notice && <span className="chip warn">⏱ {meta.date_notice}</span>}
             {state.status === "error" && <span className="chip err">error: {state.error}</span>}
           </div>
           {pending && (

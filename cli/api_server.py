@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
 import urllib.parse
@@ -219,8 +220,9 @@ def _list_sessions():
     for root, kind in _session_roots():
         if kind == "run":
             # <results>/<ticker>/<date>/ with message_tool.log or reports/
+            # (_jobs holds control files, not sessions.)
             for ticker_dir in sorted(root.iterdir()):
-                if not ticker_dir.is_dir():
+                if not ticker_dir.is_dir() or ticker_dir.name.startswith("_"):
                     continue
                 for date_dir in sorted(ticker_dir.iterdir()):
                     if not date_dir.is_dir():
@@ -255,6 +257,76 @@ def _list_sessions():
                 )
     sessions.sort(key=lambda s: s["mtime"], reverse=True)
     return sessions
+
+
+def _run_history():
+    """All runs, newest first: live in-memory records merged with finished
+    ones reconstructed from ``results/_jobs/*/`` (survives API restarts)."""
+    from cli.runs import MANAGER
+
+    live = {r.id: r.summary() for r in MANAGER.all()}
+    merged = dict(live)
+    try:
+        from tradingagents.default_config import DEFAULT_CONFIG
+
+        jobs_root = Path(DEFAULT_CONFIG["results_dir"]) / "_jobs"
+        if jobs_root.is_dir():
+            for job_dir in sorted(jobs_root.iterdir(),
+                                  key=lambda p: p.stat().st_mtime, reverse=True):
+                if not job_dir.is_dir() or job_dir.name in merged:
+                    continue
+                try:
+                    sel = json.loads((job_dir / "selections.json").read_text(encoding="utf-8"))
+                    st = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                elapsed = st.get("elapsed_seconds", 0)
+                stats = st.get("stats") or {}
+                disk_status = st.get("status", "unknown")
+                if disk_status in ("starting", "running"):
+                    # No live record owns this job (e.g. API restarted): the
+                    # process is gone, so call it interrupted, not running.
+                    disk_status = "interrupted"
+                merged[job_dir.name] = {
+                    "id": job_dir.name,
+                    "ticker": sel.get("ticker"),
+                    "date": sel.get("analysis_date"),
+                    "provider": sel.get("llm_provider"),
+                    "status": disk_status,
+                    "awaiting_input": False,
+                    "created": job_dir.stat().st_mtime,
+                    "error": st.get("error"),
+                    "elapsed_seconds": elapsed,
+                    "llm_calls": stats.get("llm_calls", 0),
+                    "tool_calls": stats.get("tool_calls", 0),
+                    "reports_completed": st.get("reports_completed", 0),
+                    "reports_total": st.get("reports_total", 0),
+                    "save_path": st.get("save_path"),
+                    "analysts": sel.get("analysts", []),
+                    "shallow_thinker": sel.get("shallow_thinker"),
+                    "deep_thinker": sel.get("deep_thinker"),
+                }
+    except Exception:
+        pass
+    # Enrich live summaries with elapsed/tools for the History tab.
+    for entry in merged.values():
+        if entry.get("id") in live:
+            rec = MANAGER.get(entry["id"])
+            if rec is not None:
+                try:
+                    st = json.loads((rec.job_dir / "status.json").read_text(encoding="utf-8"))
+                    entry["elapsed_seconds"] = st.get("elapsed_seconds", 0)
+                    entry["llm_calls"] = (st.get("stats") or {}).get("llm_calls", 0)
+                    entry["tool_calls"] = (st.get("stats") or {}).get("tool_calls", 0)
+                    entry["reports_completed"] = st.get("reports_completed", 0)
+                    entry["reports_total"] = st.get("reports_total", 0)
+                    entry["save_path"] = st.get("save_path")
+                    entry["analysts"] = rec.selections.get("analysts", [])
+                    entry["shallow_thinker"] = rec.selections.get("shallow_thinker")
+                    entry["deep_thinker"] = rec.selections.get("deep_thinker")
+                except Exception:
+                    pass
+    return sorted(merged.values(), key=lambda r: r.get("created", 0), reverse=True)
 
 
 def _resolve_session(session_id):
@@ -299,6 +371,129 @@ def _session_files(session_dir: Path, kind: str):
     return files
 
 
+_SNAP_MSGS = 200
+_SNAP_CHARS = 4000
+_SNAP_REPORT_CHARS = 30000
+_LOG_LINE = re.compile(r"^(\S+)\s+\[(.+?)\]\s?(.*)$")
+
+
+def _parse_run_log(log_path: Path):
+    """Parse message_tool.log tail into snapshot messages (newest last).
+
+    Handles both ``HH:MM:SS [Type | Agent] text`` and legacy
+    ``HH:MM:SS [Type] text`` lines.
+    """
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    out = []
+    for line in lines[-_SNAP_MSGS:]:
+        match = _LOG_LINE.match(line)
+        if not match:
+            continue
+        timestamp, tag, content = match.groups()
+        if tag == "Tool Call":
+            msg_type, agent = "Tool", None
+        elif " | " in tag:
+            msg_type, agent = tag.split(" | ", 1)
+        else:
+            msg_type, agent = tag, None
+        if len(content) > _SNAP_CHARS:
+            content = content[:_SNAP_CHARS] + "..."
+        out.append({"time": timestamp, "type": msg_type, "agent": agent or None,
+                    "content": content})
+    return out
+
+
+def _proc_snapshot(rec):
+    """Live snapshot for a subprocess run, assembled from its files."""
+    from cli.dashboard import SECTION_TITLES
+    from cli.main import MessageBuffer
+    from tradingagents.default_config import DEFAULT_CONFIG
+
+    sel = rec.selections
+    session_dir = (
+        Path(DEFAULT_CONFIG["results_dir"]) / sel.get("ticker", "") / sel.get("analysis_date", "")
+    )
+    try:
+        status = json.loads((rec.job_dir / "status.json").read_text(encoding="utf-8"))
+    except Exception:
+        status = {}
+    agents = status.get("agents") or {}
+
+    analyst_order = list(MessageBuffer.ANALYST_MAPPING.values())
+    teams = []
+    analyst_agents = [a for a in analyst_order if a in agents]
+    if analyst_agents:
+        teams.append({"team": "Analyst Team", "agents": analyst_agents})
+    for team, members in MessageBuffer.FIXED_AGENTS.items():
+        active = [a for a in members if a in agents]
+        if active:
+            teams.append({"team": team, "agents": active})
+
+    sections = {}
+    current_report = None
+    latest_mtime = -1.0
+    repdir = session_dir / "reports"
+    if repdir.is_dir():
+        for md in sorted(repdir.glob("*.md")):
+            try:
+                if md.stat().st_size == 0:
+                    continue
+                content = md.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if len(content) > _SNAP_REPORT_CHARS:
+                content = content[:_SNAP_REPORT_CHARS] + "..."
+            sections[md.stem] = content
+            try:
+                mtime = md.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            if content and mtime > latest_mtime:
+                latest_mtime, current_report = mtime, content
+
+    pending = {"question": None, "default": None, "answer": None}
+    try:
+        file_state = json.loads((rec.job_dir / "prompt.json").read_text(encoding="utf-8"))
+        if file_state.get("question") and file_state.get("answer") is None:
+            pending = {"question": file_state.get("question"),
+                       "default": file_state.get("default")}
+    except Exception:
+        pass
+
+    stats = status.get("stats") or {}
+    agents_completed = sum(1 for s in agents.values() if s == "completed")
+    return {
+        "meta": {
+            "ticker": sel.get("ticker"),
+            "analysis_date": sel.get("analysis_date"),
+            "llm_provider": sel.get("llm_provider"),
+            "date_notice": sel.get("date_notice"),
+        },
+        "last_activity_age": None,
+        "current_agent": status.get("current_agent"),
+        "teams": teams,
+        "statuses": agents,
+        "agents_completed": agents_completed,
+        "agents_total": len(agents),
+        "reports_completed": status.get("reports_completed", 0),
+        "reports_total": status.get("reports_total", len(sections)),
+        "messages": _parse_run_log(session_dir / "message_tool.log"),
+        "sections": sections,
+        "section_titles": SECTION_TITLES,
+        "current_report": current_report,
+        "final_report": None,
+        "stats": stats,
+        "elapsed_seconds": status.get("elapsed_seconds", 0),
+        "active": rec.status in ("starting", "running"),
+        "status": rec.status,
+        "pending_prompt": pending,
+        "error": rec.error or status.get("error"),
+    }
+
+
 class _Handler(BaseHTTPRequestHandler):
     server_version = "TradingAgentsAPI/1"
 
@@ -308,7 +503,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _cors(self):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
@@ -317,6 +512,13 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.startswith("/api/runs/"):
+            from cli.runs import MANAGER
+
+            run_id = parsed.path[len("/api/runs/"):].split("/")[0]
+            if MANAGER.terminate(run_id):
+                return _json(self, {"ok": True})
+            return _json(self, {"ok": False, "error": "unknown or finished run"}, status=404)
         if parsed.path == "/api/session":
             query = urllib.parse.parse_qs(parsed.query)
             session_dir, _ = _resolve_session(query.get("id", [""])[0])
@@ -368,6 +570,7 @@ class _Handler(BaseHTTPRequestHandler):
                         "current": os.environ.get("OPENCODE_BASE_URL")
                         or "https://opencode.ai/zen/v1",
                     },
+                    "customBackendUrl": os.environ.get("TRADINGAGENTS_LLM_BACKEND_URL") or "",
                 },
             )
         if path == "/api/quote":
@@ -446,9 +649,7 @@ class _Handler(BaseHTTPRequestHandler):
                 )
             return _json(self, match)
         if path == "/api/runs":
-            from cli.runs import MANAGER
-
-            return _json(self, {"runs": [r.summary() for r in MANAGER.all()]})
+            return _json(self, {"runs": _run_history()})
         if path.startswith("/api/runs/"):
             from cli.runs import MANAGER
 
@@ -458,48 +659,20 @@ class _Handler(BaseHTTPRequestHandler):
                 return _json(self, {"error": "unknown run"}, status=404)
             if len(parts) == 2 and parts[1] == "state":
                 try:
-                    from cli.dashboard import build_snapshot
-                    from cli.main import message_buffer
-
-                    snap = build_snapshot(
-                        message_buffer,
-                        rec.stats_handler,
-                        rec.start_time or rec.created,
-                        {
-                            "ticker": rec.selections.get("ticker"),
-                            "analysis_date": rec.selections.get("analysis_date"),
-                            "llm_provider": rec.selections.get("llm_provider"),
-                            "date_notice": rec.selections.get("date_notice"),
-                        },
-                    )
-                    snap["active"] = rec.status in ("starting", "running")
-                    snap["status"] = rec.status
-                    snap["pending_prompt"] = rec.pending_prompt
-                    snap["error"] = rec.error
-                    if (
-                        rec.status in ("done", "error")
-                        and rec.finished_at
-                        and rec.start_time
-                    ):
-                        snap["elapsed_seconds"] = max(
-                            0, int(rec.finished_at - rec.start_time)
-                        )
-                    return _json(self, snap)
+                    return _json(self, _proc_snapshot(rec))
                 except Exception as exc:
                     return _json(self, {"active": False, "error": str(exc)})
             if len(parts) == 2 and parts[1] == "report":
                 try:
-                    from cli.dashboard import SECTION_TITLES
-                    from cli.main import message_buffer
-
+                    snap = _proc_snapshot(rec)
                     return _json(
                         self,
                         {
-                            "status": rec.status,
-                            "sections": dict(message_buffer.report_sections),
-                            "section_titles": SECTION_TITLES,
-                            "final_report": message_buffer.final_report,
-                            "error": rec.error,
+                            "status": snap["status"],
+                            "sections": snap["sections"],
+                            "section_titles": snap["section_titles"],
+                            "final_report": snap["final_report"],
+                            "error": snap["error"],
                         },
                     )
                 except Exception as exc:
@@ -563,9 +736,15 @@ class _Handler(BaseHTTPRequestHandler):
                 return _json(self, {"ok": False, "error": "unknown run"}, status=404)
             payload = _read_json(self)
             answer = payload.get("answer")
-            if not isinstance(answer, str) or not rec.pending_prompt.get("question"):
+            if not isinstance(answer, str):
+                return _json(self, {"ok": False, "error": "answer must be a string"})
+            from cli.runs import MANAGER as _MGR
+
+            delivered = _MGR.answer(parts[0], answer)
+            if delivered is None:
+                return _json(self, {"ok": False, "error": "unknown run"}, status=404)
+            if not delivered:
                 return _json(self, {"ok": False, "error": "no pending prompt"})
-            rec.pending_prompt["answer"] = answer
             return _json(self, {"ok": True})
         if parsed.path == "/api/sessions/tables":
             payload = _read_json(self)

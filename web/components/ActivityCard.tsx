@@ -5,14 +5,24 @@ import { useRef, useState } from "react";
 export type FeedMsg = { time: string; type: string; content: string; agent?: string | null };
 
 /** Floating, draggable live-activity card. Click any event for full context. */
-export default function ActivityCard({ messages }: { messages: FeedMsg[] }) {
+export default function ActivityCard({
+  messages,
+  title,
+  onMinimize,
+  style,
+}: {
+  messages: FeedMsg[];
+  title?: string;
+  onMinimize?: () => void;
+  style?: React.CSSProperties;
+}) {
   const [min, setMin] = useState(false);
   const [sel, setSel] = useState<FeedMsg | null>(null);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const drag = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
 
   // Agent messages only — tool calls already live in Messages & Tools.
-  const items = messages.filter((m) => m.type !== "Tool").slice(-30).reverse();
+  const items = messages.filter((m) => m.type === "Agent").slice(-30).reverse();
 
   function onDown(e: React.MouseEvent) {
     const el = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
@@ -38,10 +48,10 @@ export default function ActivityCard({ messages }: { messages: FeedMsg[] }) {
 
   return (
     <>
-      <div className="floatcard" style={pos ? { left: pos.x, top: pos.y, right: "auto", bottom: "auto" } : undefined}>
+      <div className="floatcard" style={{ ...(pos ? { left: pos.x, top: pos.y, right: "auto", bottom: "auto" } : undefined), ...style }}>
         <header onMouseDown={onDown}>
-          <span>Live activity</span>
-          <button onClick={() => setMin(!min)}>{min ? "+" : "–"}</button>
+          <span>{title || "Live activity"}</span>
+          <button onClick={() => { if (onMinimize) onMinimize(); else setMin(!min); }}>{min && !onMinimize ? "+" : "–"}</button>
         </header>
         {!min && (
           <div className="scroll" style={{ padding: "4px 12px 10px" }}>
