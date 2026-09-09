@@ -1309,6 +1309,44 @@ def _build_run_config(selections: dict, checkpoint: bool | None) -> dict:
     return config
 
 
+def resolve_settled_date(ticker: str, date_str: str, max_back: int = 10):
+    """Walk back to the latest date with a settled close (weekends skipped).
+
+    Returns ``(final_date, fell_back)``. Shared by the web/API path so it
+    behaves like the CLI's loud fallback instead of silently analyzing
+    stale data under today's label.
+    """
+    import pandas as pd
+    from datetime import datetime as _dt
+
+    from tradingagents.dataflows.errors import NoMarketDataError
+    from tradingagents.dataflows.stockstats_utils import load_ohlcv
+
+    def settled_on(day: str) -> bool:
+        try:
+            df = load_ohlcv(ticker, day)
+            if df is None or df.empty or "Date" not in df.columns:
+                return False
+            ts = pd.to_datetime(day).normalize()
+            col = pd.to_datetime(df["Date"], errors="coerce").dt.normalize()
+            rows = df[col == ts]
+            return not rows.empty and rows["Close"].notna().any()
+        except (NoMarketDataError, Exception):
+            return False
+
+    if settled_on(date_str):
+        return date_str, False
+    base = _dt.strptime(date_str, "%Y-%m-%d")
+    for i in range(1, max_back + 1):
+        candidate = base - datetime.timedelta(days=i)
+        if candidate.weekday() >= 5:
+            continue
+        fallback = candidate.strftime("%Y-%m-%d")
+        if settled_on(fallback):
+            return fallback, True
+    return date_str, False
+
+
 def _normalize_selections(selections: dict) -> dict:
     """Validate + normalize a programmatic selections dict (web/API path).
 
@@ -1339,6 +1377,16 @@ def _normalize_selections(selections: dict) -> dict:
     except ValueError:
         raise ValueError("analysis_date is not a real calendar date")
     selections["analysis_date"] = date
+
+    # Same loud fallback as the CLI: never silently analyze stale data.
+    # The notice travels with the run so the web UI can display it.
+    final_date, fell_back = resolve_settled_date(selections["ticker"], date)
+    selections["analysis_date"] = final_date
+    selections["date_notice"] = (
+        f"No settled close on {date} yet — using data through {final_date}."
+        if fell_back
+        else None
+    )
 
     analysts = selections.get("analysts") or []
     try:

@@ -469,6 +469,7 @@ class _Handler(BaseHTTPRequestHandler):
                             "ticker": rec.selections.get("ticker"),
                             "analysis_date": rec.selections.get("analysis_date"),
                             "llm_provider": rec.selections.get("llm_provider"),
+                            "date_notice": rec.selections.get("date_notice"),
                         },
                     )
                     snap["active"] = rec.status in ("starting", "running")
