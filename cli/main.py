@@ -996,6 +996,24 @@ def get_analysis_date(ticker: str | None = None):
         except Exception:
             return False
 
+    def last_settled_date(date_str: str) -> str | None:
+        """Latest date <= requested with a real close, or None."""
+        import pandas as pd
+
+        try:
+            df = load_ohlcv(ticker, date_str)
+            if df is None or df.empty or "Date" not in df.columns:
+                return None
+            requested_ts = pd.to_datetime(date_str).normalize()
+            date_col = pd.to_datetime(df["Date"], errors="coerce").dt.normalize()
+            settled = df[date_col.notna() & df["Close"].notna()]
+            settled = settled[pd.to_datetime(settled["Date"], errors="coerce").dt.normalize() <= requested_ts]
+            if settled.empty:
+                return None
+            return pd.to_datetime(settled["Date"]).max().strftime("%Y-%m-%d")
+        except Exception:
+            return None
+
     while True:
         date_str = typer.prompt(
             "", default=datetime.datetime.now().strftime("%Y-%m-%d")
@@ -1032,6 +1050,16 @@ def get_analysis_date(ticker: str | None = None):
                         continue
                     else:
                         return date_str
+                # Date exists but has no settled close yet (e.g. today's live
+                # session): say so loudly and fall back to the settled date
+                # instead of silently analyzing stale data under today's label.
+                settled = last_settled_date(date_str)
+                if settled and settled != date_str:
+                    console.print(
+                        f"[yellow]{ticker} has no settled close on {date_str} yet. "
+                        f"Falling back to {settled} with available data.[/yellow]"
+                    )
+                    return settled
             return date_str
         except ValueError:
             console.print(
