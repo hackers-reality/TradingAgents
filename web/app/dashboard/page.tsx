@@ -135,14 +135,17 @@ export default function Dashboard() {
     }).catch((e) => setError(String(e)));
   }, []);
 
+  const modelsReq = useRef(0);
   useEffect(() => {
     if (!provider) return;
+    const req = ++modelsReq.current;
     setModelsLoading(true);
     setModels({ quick: [], deep: [] });
     setQuick("");
     setDeep("");
     Promise.all([api.models(provider, "quick"), api.models(provider, "deep")])
       .then(([q, d]) => {
+        if (req !== modelsReq.current) return; // stale response: provider changed again
         setModels({ quick: q.models, deep: d.models });
         setQuick(q.models.find((m: Model) => m.id !== "custom")?.id || "");
         const deepDefault = d.models.find((m: Model) => m.id !== "custom")?.id || "";
@@ -150,7 +153,9 @@ export default function Dashboard() {
         setTableModel((v) => v || deepDefault);
       })
       .catch(() => {})
-      .finally(() => setModelsLoading(false));
+      .finally(() => {
+        if (req === modelsReq.current) setModelsLoading(false);
+      });
   }, [provider]);
 
   if (!opts) return <p className="dim">{error || "Loading options from the API…"}</p>;
@@ -340,7 +345,7 @@ export default function Dashboard() {
             <>
               <label className="field">
                 Quick-thinking model
-                <select value={quick} onChange={(e) => setQuick(e.target.value)}>
+                <select value={quick} onChange={(e) => setQuick(e.target.value)} disabled={modelsLoading}>
                   {models.quick.map((m) => (
                     <option key={m.id} value={m.id}>{m.name}</option>
                   ))}
@@ -348,7 +353,7 @@ export default function Dashboard() {
               </label>
               <label className="field">
                 Deep-thinking model
-                <select value={deep} onChange={(e) => setDeep(e.target.value)}>
+                <select value={deep} onChange={(e) => setDeep(e.target.value)} disabled={modelsLoading}>
                   {models.deep.map((m) => (
                     <option key={m.id} value={m.id}>{m.name}</option>
                   ))}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, Provider } from "../../lib/api";
 
 type Session = { id: string; kind: string; ticker: string; date: string };
@@ -28,20 +28,25 @@ export default function Tables() {
     api.options().then((o) => setProviders(o.providers)).catch(() => {});
   }, []);
 
+  const modelsReq = useRef(0);
   useEffect(() => {
     if (!provider) return;
+    const req = ++modelsReq.current;
     setModelsLoading(true);
     setModels([]);
     setModel("");
     api.models(provider, "quick")
       .then((r) => {
+        if (req !== modelsReq.current) return; // stale: provider changed again
         const list = r.models.filter((m: any) => m.id !== "custom");
         setModels(r.models);
         const free = list.find((m: any) => /free/i.test(m.id));
         setModel(free?.id || list[0]?.id || "");
       })
       .catch(() => {})
-      .finally(() => setModelsLoading(false));
+      .finally(() => {
+        if (req === modelsReq.current) setModelsLoading(false);
+      });
   }, [provider]);
 
   async function open(id: string) {
