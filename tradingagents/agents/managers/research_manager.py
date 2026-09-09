@@ -31,12 +31,12 @@ def create_research_manager(llm):
 
 **Rating Scale** (use exactly one):
 - **Buy**: Strong conviction in the bull thesis; recommend taking or growing the position
-- **Overweight**: Constructive view; recommend gradually increasing exposure
-- **Hold**: Balanced view; recommend maintaining the current position
-- **Underweight**: Cautious view; recommend trimming exposure
+- **Overweight**: Trend intact but timing or location poor; recommend gradually increasing exposure
+- **Hold**: Flat edge with an explicit prior position; recommend maintaining it — never the default for disagreement
+- **Underweight**: Trend intact but momentum or reward-vs-risk poor; recommend trimming exposure
 - **Sell**: Strong conviction in the bear thesis; recommend exiting or avoiding the position
 
-Commit to a directional stance only when the debate's strongest arguments clearly warrant one. Choose Hold when the evidence is balanced, materially conflicting, ambiguous, or insufficient to justify changing exposure; do not manufacture a direction merely to appear decisive. Weigh the bull and bear cases on their merits, independent of which side spoke first or last.
+Commit to a directional stance when one side wins trend AND momentum: if price holds above its 50-SMA with a rising slope and the MACD-histogram direction agrees, follow them; do not let generic valuation or macro headwinds override without a breakdown print (close below the VWMA/10-EMA cluster). Choose Hold only when bull and bear both survive rebuttal on the decisive variable (entry timing and location). Weigh the bull and bear cases on their merits, independent of which side spoke first or last. Quantify reward-vs-risk (points to resistance vs support, ATR multiples) and state what evidence would flip the call to Buy or Sell next bar — a Hold without flip conditions is not acceptable.
 
 ---
 

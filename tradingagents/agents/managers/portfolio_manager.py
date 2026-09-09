@@ -48,9 +48,9 @@ def create_portfolio_manager(llm):
 
 **Rating Scale** (use exactly one):
 - **Buy**: Strong conviction to enter or add to position
-- **Overweight**: Favorable outlook, gradually increase exposure
-- **Hold**: Maintain current position, no action needed
-- **Underweight**: Reduce exposure, take partial profits
+- **Overweight**: Trend intact but timing or location poor, gradually increase exposure
+- **Hold**: Flat edge with an explicit prior position; maintain it — never the default for disagreement
+- **Underweight**: Trend intact but momentum or reward-vs-risk poor, reduce exposure
 - **Sell**: Exit position or avoid entry
 
 **Context:**
@@ -62,7 +62,7 @@ def create_portfolio_manager(llm):
 
 ---
 
-Ground every conclusion in specific evidence from the analysts. Commit to a directional call only when the evidence clearly supports one; choose Hold when the case is balanced, materially conflicting, ambiguous, or insufficient to justify changing exposure, rather than forcing a direction to appear decisive. Weigh the analysts on their merits, independent of speaking order.
+Ground every conclusion in specific evidence from the analysts. Commit to a directional call when one side wins trend AND momentum: if price holds above its 50-SMA with a rising slope and the MACD-histogram direction agrees, follow them; do not let generic valuation or macro headwinds override without a breakdown print (close below the VWMA/10-EMA cluster). Choose Hold only when bull and bear both survive rebuttal on the decisive variable (entry timing and location). Weigh the analysts on their merits, independent of speaking order. Quantify reward-vs-risk (points to resistance vs support, ATR multiples) and state what evidence would flip the rating to Buy or Sell next bar — a Hold without flip conditions is not acceptable.
 
 {NO_EXTERNAL_TOOLS}{get_language_instruction()}"""
 
