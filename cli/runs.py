@@ -72,7 +72,9 @@ class RunRecord:
             "status": self.status,
             "awaiting_input": self._awaiting_input(),
             "created": self.created,
+            "finished_at": self.finished_at,
             "error": self.error,
+            "session_id": None,
         }
 
     def _awaiting_input(self) -> bool:

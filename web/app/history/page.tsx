@@ -20,6 +20,8 @@ type Run = {
   shallow_thinker?: string;
   deep_thinker?: string;
   save_path?: string | null;
+  session_id?: string | null;
+  finished_at?: number | null;
 };
 
 function basename(p: string) {
@@ -28,6 +30,8 @@ function basename(p: string) {
 }
 
 function sessionFor(r: Run) {
+  // Direct session link first (disk sessions), then saved folder, then run dir.
+  if (r.session_id) return r.session_id;
   if (r.save_path) return `saved|${basename(r.save_path)}`;
   return `run|${r.ticker}|${r.date}`;
 }

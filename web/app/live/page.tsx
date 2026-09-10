@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import { api } from "../../lib/api";
 
-type Run = { id: string; ticker: string; date: string; provider: string; status: string; awaiting_input: boolean };
+type Run = { id: string; ticker: string; date: string; provider: string; status: string; awaiting_input: boolean; finished_at?: number | null };
 
 function Quote({ ticker }: { ticker: string }) {
   const [q, setQ] = useState<any>(null);
@@ -54,13 +54,26 @@ export default function Live() {
   const msgRef = useRef<HTMLDivElement>(null);
   const repRef = useRef<HTMLDivElement>(null);
 
+  // Live shows running runs plus recently finished ones (2h); old
+  // corpses live in History instead.
+  function visible(list: Run[]) {
+    const now = Date.now() / 1000;
+    return list.filter((r) => {
+      if (["starting", "running"].includes(r.status)) return true;
+      if (r.finished_at == null) return true;
+      return now - r.finished_at < 2 * 3600;
+    });
+  }
+
   useEffect(() => {
     const q = new URLSearchParams(window.location.search).get("run");
     if (q) setRunId(q);
     api.runs().then((r) => {
-      setRuns(r.runs);
-      if (!q && r.runs.length) setRunId(r.runs[0].id);
+      const list = visible(r.runs || []);
+      setRuns(list);
+      if (!q && list.length) setRunId(list[0].id);
     }).catch((e) => setError(String(e.message || e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -167,7 +180,8 @@ export default function Live() {
           ))}
         </select>
       </label>
-      {!state && <p className="dim">No run selected. Start one from Dashboard, or run the CLI.</p>}
+      {!runId && <p className="dim">No live or recent runs. Start one from Dashboard — older ones live in History and Reports.</p>}
+      {runId && !state && !error && <p className="dim">Loading run…</p>}
       {state && (
         <>
           <div className="stats">

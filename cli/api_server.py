@@ -215,7 +215,56 @@ def _session_roots():
     return roots
 
 
+_SESSIONS_CACHE = {"at": 0.0, "value": []}
+_SESSIONS_TTL = 10.0
+
+
+def _count_marker(path: Path, marker: str) -> int:
+    """Count marker occurrences streaming in chunks (log-safe, low memory)."""
+    count = 0
+    try:
+        with open(path, "rb") as f:
+            tail = b""
+            while True:
+                chunk = f.read(65536)
+                if not chunk:
+                    break
+                buf = tail + chunk
+                count += buf.count(marker.encode("ascii", "ignore"))
+                tail = buf[-(len(marker) - 1):] if len(marker) > 1 else b""
+    except OSError:
+        pass
+    return count
+
+
+def _session_counts(session_dir: Path, kind: str):
+    """(md_file_count, tool_call_count|None) without reading file bodies."""
+    if kind == "saved":
+        try:
+            md_count = sum(1 for _ in session_dir.rglob("*.md"))
+        except OSError:
+            md_count = 0
+        return md_count, None
+    md_count = 0
+    repdir = session_dir / "reports"
+    if repdir.is_dir():
+        try:
+            md_count = sum(
+                1 for p in repdir.glob("*.md")
+                if p.is_file() and p.stat().st_size > 0
+            )
+        except OSError:
+            md_count = 0
+    tool_count = _count_marker(session_dir / "message_tool.log", "[Tool Call]")
+    return md_count, tool_count
+
+
 def _list_sessions():
+    import time as _time
+
+    now = _time.time()
+    if now - _SESSIONS_CACHE["at"] < _SESSIONS_TTL:
+        return _SESSIONS_CACHE["value"]
     sessions = []
     for root, kind in _session_roots():
         if kind == "run":
@@ -256,6 +305,8 @@ def _list_sessions():
                     }
                 )
     sessions.sort(key=lambda s: s["mtime"], reverse=True)
+    _SESSIONS_CACHE["at"] = _time.time()
+    _SESSIONS_CACHE["value"] = sessions
     return sessions
 
 
@@ -287,8 +338,14 @@ def _run_history():
                     # No live record owns this job (e.g. API restarted): the
                     # process is gone, so call it interrupted, not running.
                     disk_status = "interrupted"
+                try:
+                    finished_at = (job_dir / "status.json").stat().st_mtime
+                except OSError:
+                    finished_at = job_dir.stat().st_mtime
                 merged[job_dir.name] = {
                     "id": job_dir.name,
+                    "finished_at": finished_at,
+                    "session_id": None,
                     "ticker": sel.get("ticker"),
                     "date": sel.get("analysis_date"),
                     "provider": sel.get("llm_provider"),
@@ -306,6 +363,45 @@ def _run_history():
                     "shallow_thinker": sel.get("shallow_thinker"),
                     "deep_thinker": sel.get("deep_thinker"),
                 }
+    except Exception:
+        pass
+    # Disk sessions (incl. CLI runs, which never create job dirs): one
+    # history row each, skipped when a web run already covers the same
+    # ticker+date. Click-through uses the session id directly.
+    try:
+        covered = {
+            (e.get("ticker"), e.get("date")) for e in merged.values()
+        }
+        for session in _list_sessions():
+            key = (session.get("ticker"), session.get("date"))
+            if key in covered:
+                continue
+            kind = session.get("kind")
+            session_dir, _ = _resolve_session(session["id"])
+            md_count, tool_count = (0, 0)
+            if session_dir is not None:
+                md_count, tool_count = _session_counts(session_dir, kind)
+            merged["session:" + session["id"]] = {
+                "id": "session:" + session["id"],
+                "ticker": session.get("ticker"),
+                "date": session.get("date"),
+                "provider": None,
+                "status": "done",
+                "awaiting_input": False,
+                "created": session.get("mtime", 0),
+                "finished_at": session.get("mtime", 0),
+                "error": None,
+                "elapsed_seconds": None,
+                "llm_calls": None,
+                "tool_calls": tool_count or None,
+                "reports_completed": md_count,
+                "reports_total": md_count,
+                "save_path": None,
+                "analysts": [],
+                "shallow_thinker": None,
+                "deep_thinker": None,
+                "session_id": session["id"],
+            }
     except Exception:
         pass
     # Enrich live summaries with elapsed/tools for the History tab.
@@ -404,6 +500,97 @@ def _parse_run_log(log_path: Path):
         out.append({"time": timestamp, "type": msg_type, "agent": agent or None,
                     "content": content})
     return out
+
+
+def _disk_snapshot(job_id):
+    """Snapshot for a run with no live record (e.g. after API restart).
+
+    Rebuilt from the job dir + session files; read-only, no process needed.
+    Returns None when nothing is found.
+    """
+    from tradingagents.default_config import DEFAULT_CONFIG
+
+    job_dir = Path(DEFAULT_CONFIG["results_dir"]) / "_jobs" / job_id
+    try:
+        sel = json.loads((job_dir / "selections.json").read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    try:
+        status = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
+    except Exception:
+        status = {}
+    session_dir = (
+        Path(DEFAULT_CONFIG["results_dir"]) / sel.get("ticker", "") / sel.get("analysis_date", "")
+    )
+    from cli.dashboard import SECTION_TITLES
+
+    sections = {}
+    current_report = None
+    latest_mtime = -1.0
+    repdir = session_dir / "reports"
+    if repdir.is_dir():
+        for md in sorted(repdir.glob("*.md")):
+            try:
+                if md.stat().st_size == 0:
+                    continue
+                content = md.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if len(content) > _SNAP_REPORT_CHARS:
+                content = content[:_SNAP_REPORT_CHARS] + "..."
+            sections[md.stem] = content
+            try:
+                mtime = md.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            if content and mtime > latest_mtime:
+                latest_mtime, current_report = mtime, content
+    agents = status.get("agents", {})
+    analyst_order = ["Market Analyst", "Sentiment Analyst", "News Analyst", "Fundamentals Analyst"]
+    teams = []
+    analyst_agents = [a for a in analyst_order if a in agents]
+    if analyst_agents:
+        teams.append({"team": "Analyst Team", "agents": analyst_agents})
+    # Rebuild remaining teams from whatever agents the file lists.
+    seen = set(analyst_agents)
+    buckets: dict[str, list] = {}
+    for agent in agents:
+        if agent in seen:
+            continue
+        buckets.setdefault("Other", []).append(agent)
+    for team, members in buckets.items():
+        teams.append({"team": team, "agents": members})
+    stats = status.get("stats") or {}
+    finished = status.get("status") in ("done", "error")
+    return {
+        "meta": {
+            "ticker": sel.get("ticker"),
+            "analysis_date": sel.get("analysis_date"),
+            "llm_provider": sel.get("llm_provider"),
+            "date_notice": sel.get("date_notice"),
+            "shallow_thinker": sel.get("shallow_thinker"),
+            "deep_thinker": sel.get("deep_thinker"),
+        },
+        "last_activity_age": None,
+        "current_agent": status.get("current_agent"),
+        "teams": teams,
+        "statuses": agents,
+        "agents_completed": sum(1 for s in agents.values() if s == "completed"),
+        "agents_total": len(agents),
+        "reports_completed": status.get("reports_completed", len(sections)),
+        "reports_total": status.get("reports_total", len(sections)),
+        "messages": _parse_run_log(session_dir / "message_tool.log"),
+        "sections": sections,
+        "section_titles": SECTION_TITLES,
+        "current_report": current_report,
+        "final_report": None,
+        "stats": stats,
+        "elapsed_seconds": status.get("elapsed_seconds", 0),
+        "active": False,
+        "status": status.get("status", "unknown"),
+        "pending_prompt": {"question": None, "default": None, "answer": None},
+        "error": status.get("error"),
+    }
 
 
 def _proc_snapshot(rec):
@@ -658,7 +845,23 @@ class _Handler(BaseHTTPRequestHandler):
             parts = path[len("/api/runs/"):].split("/")
             rec = MANAGER.get(parts[0]) if parts and parts[0] else None
             if rec is None:
-                return _json(self, {"error": "unknown run"}, status=404)
+                disk = _disk_snapshot(parts[0]) if parts and parts[0] else None
+                if disk is None:
+                    return _json(self, {"error": "unknown run"}, status=404)
+                if len(parts) == 2 and parts[1] == "state":
+                    return _json(self, disk)
+                if len(parts) == 2 and parts[1] == "report":
+                    return _json(
+                        self,
+                        {
+                            "status": disk["status"],
+                            "sections": disk["sections"],
+                            "section_titles": disk["section_titles"],
+                            "final_report": disk["final_report"],
+                            "error": disk["error"],
+                        },
+                    )
+                return _json(self, {"error": "not found"}, status=404)
             if len(parts) == 2 and parts[1] == "state":
                 try:
                     return _json(self, _proc_snapshot(rec))
