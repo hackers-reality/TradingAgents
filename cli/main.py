@@ -1661,6 +1661,31 @@ def run_analysis(checkpoint: bool | None = None, selections: dict | None = None,
     report_dir.mkdir(parents=True, exist_ok=True)
     log_file = results_dir / "message_tool.log"
     log_file.touch(exist_ok=True)
+    # Persist run metadata (provider/models/analysts — never secrets) so the
+    # History tab can attribute past runs, including CLI ones, which leave
+    # no job dir behind.
+    try:
+        analysts = selections.get("analysts") or []
+        (results_dir / "run_meta.json").write_text(
+            json.dumps(
+                {
+                    "ticker": selections.get("ticker"),
+                    "analysis_date": selections.get("analysis_date"),
+                    "llm_provider": selections.get("llm_provider"),
+                    "shallow_thinker": selections.get("shallow_thinker"),
+                    "deep_thinker": selections.get("deep_thinker"),
+                    "table_model": selections.get("table_model"),
+                    "analysts": [
+                        a.value if hasattr(a, "value") else str(a) for a in analysts
+                    ],
+                    "research_depth": selections.get("research_depth"),
+                    "output_language": selections.get("output_language"),
+                }
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
 
     def save_message_decorator(obj, func_name):
         func = getattr(obj, func_name)

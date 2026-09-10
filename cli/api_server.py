@@ -379,13 +379,20 @@ def _run_history():
             kind = session.get("kind")
             session_dir, _ = _resolve_session(session["id"])
             md_count, tool_count = (0, 0)
+            run_meta = {}
             if session_dir is not None:
                 md_count, tool_count = _session_counts(session_dir, kind)
+                try:
+                    run_meta = json.loads(
+                        (session_dir / "run_meta.json").read_text(encoding="utf-8")
+                    )
+                except Exception:
+                    run_meta = {}
             merged["session:" + session["id"]] = {
                 "id": "session:" + session["id"],
                 "ticker": session.get("ticker"),
                 "date": session.get("date"),
-                "provider": None,
+                "provider": run_meta.get("llm_provider"),
                 "status": "done",
                 "awaiting_input": False,
                 "created": session.get("mtime", 0),
@@ -397,9 +404,9 @@ def _run_history():
                 "reports_completed": md_count,
                 "reports_total": md_count,
                 "save_path": None,
-                "analysts": [],
-                "shallow_thinker": None,
-                "deep_thinker": None,
+                "analysts": run_meta.get("analysts", []),
+                "shallow_thinker": run_meta.get("shallow_thinker"),
+                "deep_thinker": run_meta.get("deep_thinker"),
                 "session_id": session["id"],
             }
     except Exception:

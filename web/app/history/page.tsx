@@ -65,7 +65,20 @@ export default function History() {
       {error && <p className="err">{error}</p>}
       <div className="panel">
         <div className="scroll" style={{ maxHeight: "75vh" }}>
-          <table className="grid">
+          <table className="grid" style={{ tableLayout: "fixed", width: "100%" }}>
+            <colgroup>
+              <col style={{ width: 90 }} />
+              <col style={{ width: 150 }} />
+              <col style={{ width: 80 }} />
+              <col />
+              <col style={{ width: 130 }} />
+              <col style={{ width: 70 }} />
+              <col style={{ width: 55 }} />
+              <col style={{ width: 60 }} />
+              <col style={{ width: 75 }} />
+              <col style={{ width: 110 }} />
+              <col style={{ width: 180 }} />
+            </colgroup>
             <thead>
               <tr>
                 <th>ticker</th>
@@ -89,18 +102,18 @@ export default function History() {
                   style={{ cursor: "pointer" }}
                 >
                   <td><b>{r.ticker}</b></td>
-                  <td>{r.date}</td>
-                  <td>{r.provider}</td>
-                  <td className="dim" style={{ fontSize: 12 }}>
+                  <td title={r.date} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.date}</td>
+                  <td>{r.provider || "–"}</td>
+                  <td className="dim" title={[r.shallow_thinker, r.deep_thinker].filter(Boolean).join(" / ")} style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {[r.shallow_thinker, r.deep_thinker].filter(Boolean).join(" / ") || "–"}
                   </td>
-                  <td style={{ fontSize: 12 }}>{(r.analysts || []).join(", ") || "–"}</td>
+                  <td style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={(r.analysts || []).join(", ")}>{(r.analysts || []).join(", ") || "–"}</td>
                   <td>{fmtElapsed(r.elapsed_seconds)}</td>
                   <td>{r.llm_calls ?? "–"}</td>
                   <td>{r.tool_calls ?? "–"}</td>
                   <td>{r.reports_completed ?? 0}/{r.reports_total ?? 0}</td>
                   <td><span className={`pill ${pillClass(r.status)}`}>{r.status}</span></td>
-                  <td className="err" style={{ fontSize: 12, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis" }}>
+                  <td className="err" title={r.error || ""} style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {r.error || ""}
                   </td>
                 </tr>
