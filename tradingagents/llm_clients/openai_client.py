@@ -27,6 +27,11 @@ RETRYABLE_ERRORS = (
     "temporarily unavailable",
     "service unavailable",
 )
+# Opencode Zen's free tier flaps: identical function-calling requests 400
+# with MissingSessionID, then succeed minutes later. One delayed retry
+# rides out the flap instead of killing the run on first contact.
+ZEN_FLAP_MARKER = "MissingSessionID"
+ZEN_FLAP_DELAY_SECONDS = 15
 
 
 class NormalizedChatOpenAI(ChatOpenAI):
@@ -74,6 +79,16 @@ class NormalizedChatOpenAI(ChatOpenAI):
                     print(f"[yellow]LLM invoke attempt {attempt}/{MAX_INVOKE_RETRIES} failed: {e}. Retrying in {RETRY_DELAY_SECONDS}s...[/yellow]")
                     time.sleep(RETRY_DELAY_SECONDS)
                     continue
+
+                # Zen free-tier flap: same request succeeds minutes later.
+                if ZEN_FLAP_MARKER in msg:
+                    print(f"[yellow]Zen free-tier gate hit ({self.model_name}); retrying once in {ZEN_FLAP_DELAY_SECONDS}s...[/yellow]")
+                    time.sleep(ZEN_FLAP_DELAY_SECONDS)
+                    try:
+                        return normalize_content(super().invoke(input, config, **kwargs))
+                    except Exception as retry_exc:
+                        last_error = retry_exc
+                        raise
 
                 # Non-retryable or max retries exceeded
                 raise
