@@ -2094,7 +2094,14 @@ def _default(
 ):
     """TradingAgents CLI (default: run analysis)."""
     if ctx.invoked_subcommand is None:
-        analyze(checkpoint=checkpoint, clear_checkpoints=clear_checkpoints)
+        # Pass through explicitly: direct calls don't resolve typer defaults,
+        # leaving OptionInfo sentinels that would trip the --from-json path.
+        analyze(
+            checkpoint=checkpoint,
+            clear_checkpoints=clear_checkpoints,
+            from_json=None,
+            job_dir=None,
+        )
 
 
 @app.command()
