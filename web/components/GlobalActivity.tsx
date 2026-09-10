@@ -84,7 +84,7 @@ export default function GlobalActivity() {
       {minimized.length > 0 && (
         <div className="edgetabs" title="Live runs — hover to peek, click to expand">
           {minimized.map((r) => (
-            <button key={r.id} className="edgetab" onClick={() => setOpen((o) => ({ ...o, [r.id]: true }))}>
+            <button key={r.id} className="edgetab" style={{ marginTop: 0 }} onClick={() => setOpen((o) => ({ ...o, [r.id]: true }))}>
               <span className="dot" />
               <span className="tick">{r.ticker}</span>
               <span>{r.date}</span>

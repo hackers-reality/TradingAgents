@@ -73,11 +73,10 @@ export default function History() {
               <col />
               <col style={{ width: 130 }} />
               <col style={{ width: 70 }} />
-              <col style={{ width: 55 }} />
-              <col style={{ width: 60 }} />
+              <col style={{ width: 110 }} />
               <col style={{ width: 75 }} />
               <col style={{ width: 110 }} />
-              <col style={{ width: 180 }} />
+              <col />
             </colgroup>
             <thead>
               <tr>
@@ -87,8 +86,7 @@ export default function History() {
                 <th>models</th>
                 <th>analysts</th>
                 <th>elapsed</th>
-                <th>LLM</th>
-                <th>tools</th>
+                <th>llm/tools</th>
                 <th>reports</th>
                 <th>status</th>
                 <th>error</th>
@@ -109,12 +107,18 @@ export default function History() {
                   </td>
                   <td style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={(r.analysts || []).join(", ")}>{(r.analysts || []).join(", ") || "–"}</td>
                   <td>{fmtElapsed(r.elapsed_seconds)}</td>
-                  <td>{r.llm_calls ?? "–"}</td>
-                  <td>{r.tool_calls ?? "–"}</td>
+                  <td>{r.llm_calls ?? "–"}/{r.tool_calls ?? "–"}</td>
                   <td>{r.reports_completed ?? 0}/{r.reports_total ?? 0}</td>
                   <td><span className={`pill ${pillClass(r.status)}`}>{r.status}</span></td>
-                  <td className="err" title={r.error || ""} style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {r.error || ""}
+                  <td style={{ fontSize: 12 }}>
+                    {r.error ? (
+                      <details>
+                        <summary className="err" style={{ cursor: "pointer", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {(r.error || "").split("\n")[0].slice(0, 60)}
+                        </summary>
+                        <pre className="err" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: "4px 0 0", maxHeight: 200, overflowY: "auto" }}>{r.error}</pre>
+                      </details>
+                    ) : ""}
                   </td>
                 </tr>
               ))}

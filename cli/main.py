@@ -1654,8 +1654,26 @@ def run_analysis(checkpoint: bool | None = None, selections: dict | None = None,
     if job_dir is not None:
         _job_sink = JobStatusSink(job_dir, selections, stats_handler, start_time)
 
-    # Create result directory
+    # Create result directory. A rerun of the same ticker+date must NOT
+    # append to (or read) the previous run's log and reports — rotate any
+    # existing session aside first so the new run starts clean.
     results_dir = Path(config["results_dir"]) / selections["ticker"] / selections["analysis_date"]
+    try:
+        _old_log = results_dir / "message_tool.log"
+        _old_reports = results_dir / "reports"
+        _has_old = (_old_log.exists() and _old_log.stat().st_size > 0) or (
+            _old_reports.is_dir() and any(_old_reports.iterdir())
+        )
+    except OSError:
+        _has_old = False
+    if _has_old:
+        _stamp = datetime.datetime.now().strftime("%H%M%S")
+        _backup = results_dir.parent / f"{results_dir.name}__prev_{_stamp}"
+        try:
+            results_dir.rename(_backup)
+            console.print(f"[dim]Previous session rotated to {_backup.name}[/dim]")
+        except OSError as exc:
+            console.print(f"[yellow]Could not rotate previous session: {exc}[/yellow]")
     results_dir.mkdir(parents=True, exist_ok=True)
     report_dir = results_dir / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -2083,8 +2101,14 @@ def run_analysis(checkpoint: bool | None = None, selections: dict | None = None,
             )
             total = sum(len(v) for v in tables.values())
             console.print(f"[green]✓ Tables saved ({total} across {len(tables)} sections)[/green]")
+            if _job_sink is not None:
+                _job_sink.extra.pop("tables_error", None)
+                _job_sink.dump()
         except Exception as e:
             console.print(f"[red]Table generation failed: {e}[/red]")
+            if _job_sink is not None:
+                _job_sink.extra["tables_error"] = f"{type(e).__name__}: {e}"
+                _job_sink.dump()
 
     stop_dashboard(dashboard_server)
     dashboard_port = None
