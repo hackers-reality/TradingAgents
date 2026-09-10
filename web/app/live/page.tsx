@@ -83,6 +83,7 @@ export default function Live() {
       try {
         const s = await api.runState(runId);
         if (alive) {
+          setError("");
           setState(s);
           if (!s.pending_prompt?.question) setAnswer("");
           else if (!answer && s.pending_prompt.default) setAnswer(s.pending_prompt.default);

@@ -572,6 +572,7 @@ def _disk_snapshot(job_id):
     stats = status.get("stats") or {}
     finished = status.get("status") in ("done", "error")
     return {
+        "pending_prompt": {"question": None, "default": None, "answer": None},
         "meta": {
             "ticker": sel.get("ticker"),
             "analysis_date": sel.get("analysis_date"),
@@ -661,8 +662,16 @@ def _proc_snapshot(rec):
 
     stats = status.get("stats") or {}
     agents_completed = sum(1 for s in agents.values() if s == "completed")
+    pending = {"question": None, "default": None, "answer": None}
+    try:
+        file_state = json.loads((rec.job_dir / "prompt.json").read_text(encoding="utf-8"))
+        if file_state.get("question") and file_state.get("answer") is None:
+            pending = {"question": file_state.get("question"),
+                       "default": file_state.get("default")}
+    except Exception:
+        pass
     return {
-        "tables_error": status.get("tables_error"),
+        "pending_prompt": pending,
         "meta": {
             "ticker": sel.get("ticker"),
             "analysis_date": sel.get("analysis_date"),
