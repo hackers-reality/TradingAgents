@@ -177,9 +177,19 @@ def _decode_tables(raw: str) -> list[dict] | None:
 
 def reformat_with_llm(llm, agent_label: str, content: str) -> list[dict]:
     """Ask the table model to normalize a section; fallback to pipe parsing."""
+    import time as _time
+
     prompt = EXTRACT_PROMPT.format(agent=agent_label, content=content[:12000])
     try:
         result = llm.invoke(prompt)
+    except Exception as first_exc:
+        # Zen's free-tier gate flaps (identical calls 400 then succeed), so
+        # one delayed retry is worth it before falling back to pipe parsing.
+        if "MissingSessionID" not in str(first_exc):
+            raise
+        _time.sleep(15)
+        result = llm.invoke(prompt)
+    try:
         text = getattr(result, "content", result)
         if isinstance(text, list):  # content-block style responses
             text = "\n".join(
