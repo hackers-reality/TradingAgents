@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
@@ -304,6 +305,14 @@ def is_openai_compatible(provider: str) -> bool:
 _ZEN_RESPONSES_PREFIXES = ("muse-spark-", "gpt-", "grok-")
 
 
+# Opencode Zen's go/responses gateway requires an x-opencode-session header
+# carrying a session id; without it every call 400s with MissingSessionID
+# (independent client ecosystems hit the same wall — their SDKs never emit
+# the header either). One stable id per process; parallel runs are separate
+# processes, so each gets its own session automatically.
+_OPENCODE_SESSION_ID = str(uuid.uuid4())
+
+
 def _is_zen_responses_model(model: str | None) -> bool:
     """True for Opencode Zen models served on the Responses API.
 
@@ -403,6 +412,15 @@ class OpenAIClient(BaseLLMClient):
         # Responses API (/responses); Chat Completions answers HTTP 500.
         if self.provider == "opencode" and _is_zen_responses_model(self.model):
             llm_kwargs["use_responses_api"] = True
+
+        # Opencode Zen requires the session header on every call, or the
+        # gateway answers 400 MissingSessionID. It must go through
+        # default_headers: ChatOpenAI shunts a top-level extra_headers into
+        # model_kwargs (request body), never reaching the wire.
+        if self.provider == "opencode":
+            llm_kwargs["default_headers"] = {
+                "x-opencode-session": _OPENCODE_SESSION_ID
+            }
 
         # Forward user-provided kwargs
         for key in _PASSTHROUGH_KWARGS:
