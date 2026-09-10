@@ -48,7 +48,7 @@ _RUN_FILES = {
     "final_trade_decision.md": "Portfolio Management",
 }
 
-EXTRACT_PROMPT = """You extract data tables from a financial analysis report section.
+EXTRACT_PROMPT = """You convert a financial analysis report section into clean data tables.
 
 Agent: {agent}
 Report section markdown:
@@ -56,11 +56,38 @@ Report section markdown:
 {content}
 ---
 
-Return ONLY a JSON array (no prose, no fences) with one object per data
-table found:
-[{{"title": "<short table title>", "headers": ["col1", "col2"], "rows": [["a", "b"], ...]}}]
-Rules: every row must have exactly len(headers) cells (pad with ""); keep
-numbers as written; skip tables with no data rows; return [] if none exist."""
+Return ONLY a JSON array (no prose, no code fences, no commentary).
+Each element is one table:
+[{{"title": "<table title>", "headers": ["col1", "col2"], "rows": [["a", "b"], ...]}}]
+
+HEADINGS:
+- Every table MUST have a "title": "<Agent> - <topic>", e.g. "Market Analyst - Key price levels".
+  If the section suggests no topic, use "<Agent> - Key figures".
+- Every table MUST have "headers": 2 to 6 short column names. Put units in
+  the header, e.g. "Close (INR)", "Change (%)", "Date". Never leave a header
+  empty; never use "Column 1" style placeholders.
+
+ROWS AND CELLS:
+- Every row MUST be an array with exactly len(headers) cells. Pad short rows
+  with "" and truncate long ones.
+- Cells are plain values (numbers, dates, short phrases). Keep numbers
+  EXACTLY as written (same decimals, same separators).
+- The single most important figure per row MAY be wrapped in double
+  asterisks for bold, e.g. "**230.36**". Use bold sparingly (at most one
+  cell per row) and never in headers.
+- Never put markdown links, images, or newlines inside a cell.
+
+WHAT TO INCLUDE:
+- One table per distinct subject in the section (prices, indicators,
+  valuation, scenarios, levels...). Merge scattered facts about the same
+  subject into a single table instead of many one-row tables.
+- Skip tables with zero data rows. If the section holds no tabular facts
+  at all, return exactly [].
+- Match the report's language.
+
+EXAMPLE (format only):
+[{{"title": "Market Analyst - Key levels", "headers": ["Item", "Value"],
+"rows": [["Close", "**230.36**"], ["RSI (14)", "60.39"]]}}]"""
 
 
 def collect_section_files(session_dir: Path, kind: str) -> list[tuple[str, Path]]:

@@ -6,6 +6,17 @@ import { api, Provider } from "../../lib/api";
 type Session = { id: string; kind: string; ticker: string; date: string };
 type Table = { title: string; headers: string[]; rows: string[][] };
 
+/** Cells may carry **bold** from the extractor — render it, nothing else. */
+function Cell({ text }: { text: string }) {
+  const parts = String(text ?? "").split("**");
+  if (parts.length === 1) return <>{text}</>;
+  return (
+    <>
+      {parts.map((p, i) => (i % 2 === 1 ? <b key={i}>{p}</b> : <span key={i}>{p}</span>))}
+    </>
+  );
+}
+
 export default function Tables() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sel, setSel] = useState("");
@@ -178,7 +189,7 @@ export default function Tables() {
                     </thead>
                     <tbody>
                       {t.rows.map((row, k) => (
-                        <tr key={k}>{row.map((c, j) => <td key={j}>{c}</td>)}</tr>
+                        <tr key={k}>{row.map((c, j) => <td key={j}><Cell text={c} /></td>)}</tr>
                       ))}
                     </tbody>
                   </table>
