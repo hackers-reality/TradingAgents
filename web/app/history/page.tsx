@@ -67,16 +67,17 @@ export default function History() {
         <div className="scroll" style={{ maxHeight: "75vh" }}>
           <table className="grid" style={{ tableLayout: "fixed", width: "100%" }}>
             <colgroup>
-              <col style={{ width: 90 }} />
-              <col style={{ width: 150 }} />
-              <col style={{ width: 80 }} />
-              <col />
-              <col style={{ width: 130 }} />
               <col style={{ width: 70 }} />
               <col style={{ width: 110 }} />
-              <col style={{ width: 75 }} />
-              <col style={{ width: 110 }} />
-              <col />
+              <col style={{ width: 70 }} />
+              <col style={{ width: 200 }} />
+              <col style={{ width: 100 }} />
+              <col style={{ width: 60 }} />
+              <col style={{ width: 80 }} />
+              <col style={{ width: 60 }} />
+              <col style={{ width: 90 }} />
+              <col style={{ width: 60 }} />
+              <col style={{ width: 120 }} />
             </colgroup>
             <thead>
               <tr>
@@ -89,6 +90,7 @@ export default function History() {
                 <th>llm/tools</th>
                 <th>reports</th>
                 <th>status</th>
+                <th>src</th>
                 <th>error</th>
               </tr>
             </thead>
@@ -110,6 +112,7 @@ export default function History() {
                   <td>{r.llm_calls ?? "–"}/{r.tool_calls ?? "–"}</td>
                   <td>{r.reports_completed ?? 0}/{r.reports_total ?? 0}</td>
                   <td><span className={`pill ${pillClass(r.status)}`}>{r.status}</span></td>
+                  <td className="dim" style={{ fontSize: 12 }}>{(r as any).src || "–"}</td>
                   <td style={{ fontSize: 12 }}>
                     {r.error ? (
                       <details>

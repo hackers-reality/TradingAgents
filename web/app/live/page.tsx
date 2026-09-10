@@ -203,6 +203,7 @@ export default function Live() {
             </span>
             {meta.llm_provider && <span className="chip">{meta.llm_provider}</span>}
             {meta.date_notice && <span className="chip warn">⏱ {meta.date_notice}</span>}
+            {state.tables_error && <span className="chip err" title={state.tables_error}>tables: failed</span>}
             {state.status === "error" && <span className="chip err">error: {state.error}</span>}
           </div>
           {pending && (

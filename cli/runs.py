@@ -72,6 +72,7 @@ class RunRecord:
             "status": self.status,
             "awaiting_input": self._awaiting_input(),
             "created": self.created,
+            "src": "web",
             "finished_at": self.finished_at,
             "error": self.error,
             "session_id": None,

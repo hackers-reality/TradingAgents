@@ -352,6 +352,7 @@ def _run_history():
                     "status": disk_status,
                     "awaiting_input": False,
                     "created": job_dir.stat().st_mtime,
+                    "src": "web",
                     "error": st.get("error"),
                     "elapsed_seconds": elapsed,
                     "llm_calls": stats.get("llm_calls", 0),
@@ -396,6 +397,7 @@ def _run_history():
                 "status": "done",
                 "awaiting_input": False,
                 "created": session.get("mtime", 0),
+                "src": kind,
                 "finished_at": session.get("mtime", 0),
                 "error": None,
                 "elapsed_seconds": None,
@@ -660,6 +662,7 @@ def _proc_snapshot(rec):
     stats = status.get("stats") or {}
     agents_completed = sum(1 for s in agents.values() if s == "completed")
     return {
+        "tables_error": status.get("tables_error"),
         "meta": {
             "ticker": sel.get("ticker"),
             "analysis_date": sel.get("analysis_date"),
